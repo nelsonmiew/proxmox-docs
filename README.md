@@ -28,6 +28,7 @@ This comprehensive guide provides everything needed to deploy, secure, and maint
 4. Deploy [Monitoring Stack](./monitoring-observability-stack.md)
 5. Configure [VPN Access](./fortigate-vpn-integration.md)
 6. Deploy [Production Applications](./application-deployment-examples.md)
+7. Review [Frequently Asked Questions](./FAQ.md)
 
 ## Documentation Index
 
@@ -219,6 +220,36 @@ This comprehensive guide provides everything needed to deploy, secure, and maint
 - Session persistence across instances
 - Centralized logging and monitoring
 - Automated backup and recovery procedures
+
+---
+
+### 7. [Frequently Asked Questions](./FAQ.md)
+
+**Every production deployment raises critical questions about architecture decisions, resource allocation, and best practices. This comprehensive FAQ addresses the most common questions from real-world Proxmox deployments, providing clear guidance on when to use specific approaches and why. From "one site per VM vs shared hosting" to database architecture and scaling strategies, these answers come from years of production experience.**
+
+**Critical Questions Answered:**
+
+- **Architecture Decisions**: One site per VM vs shared hosting, database separation strategies, resource allocation guidelines
+- **Security Concerns**: How to secure Proxmox management, SSL certificate management, network segmentation
+- **Performance Optimization**: Resource limits, VM vs LXC containers, scaling strategies
+- **Backup Strategies**: Frequency recommendations, 3-2-1 rule implementation, database backup layers
+- **Monitoring Requirements**: What to monitor, alerting strategies, maintenance procedures
+- **Troubleshooting**: Common issues and their solutions, performance problems, network connectivity
+
+**Real-World Scenarios:**
+
+- Small business with 5-10 websites: Shared vs dedicated VM strategy
+- Enterprise with compliance requirements: Separate database architecture
+- High-traffic e-commerce: Scaling and performance optimization
+- Development teams: Container vs VM decisions
+- Security-sensitive applications: Access control and isolation
+
+**Decision Frameworks:**
+
+- Resource allocation calculators based on traffic and application type
+- When to scale vertically vs horizontally
+- Cost-benefit analysis of different architecture approaches
+- Risk assessment for shared vs isolated environments
 
 ---
 

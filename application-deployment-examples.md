@@ -4,6 +4,40 @@
 
 This guide provides real-world examples of deploying production applications on Proxmox VMs, covering both traditional LAMP/LEMP stacks and modern containerized deployments. Each example includes complete configurations, performance tuning, and best practices.
 
+## VM ID Numbering Convention
+
+All examples follow the standardized VM ID numbering scheme for consistent infrastructure management:
+
+| VM ID Range | Purpose | Example VMs in This Guide |
+|-------------|---------|---------------------------|
+| **120-139** | Network Infrastructure | VM 121: HAProxy Load Balancer |
+| **200-219** | Web Servers | VM 201: CakePHP E-commerce Web Server |
+| **220-239** | Application Servers | VM 221: Django SaaS Application Server |
+| **260-279** | Cache Servers | VM 261: Redis Cache (E-commerce)<br>VM 262: Redis Cache (Django) |
+| **300-319** | Primary Databases | VM 301: MySQL Primary (E-commerce) |
+| **320-339** | Database Replicas | VM 321: MySQL Replica (E-commerce) |
+| **340-359** | Analytics Databases | VM 341: PostgreSQL (Django SaaS) |
+| **500-519** | Docker Hosts | VM 501: Docker Host #1<br>VM 502: Docker Host #2 |
+
+### VM Naming Convention
+
+Each VM follows a descriptive naming pattern that matches its ID range:
+
+```bash
+# Format: [tier]-[technology]-[environment][number]
+VM 201: web-cakephp-prod01          # Web tier, CakePHP, Production #1
+VM 301: mysql-ecommerce-prod01      # Database tier, MySQL, E-commerce, Production #1
+VM 221: app-django-saas-prod01      # Application tier, Django, SaaS, Production #1
+VM 501: docker-host-prod01          # Container tier, Docker Host, Production #1
+```
+
+This systematic approach ensures:
+- **Clear identification** of VM purpose from ID alone
+- **Logical grouping** of related services
+- **Easy scaling** with room for additional VMs in each tier
+- **Consistent backup scheduling** based on ID ranges
+- **Simplified monitoring** and automation
+
 ## Architecture Patterns
 
 ```
@@ -39,9 +73,17 @@ This guide provides real-world examples of deploying production applications on 
 ### VM Configuration
 
 ```bash
-# Create VM for CakePHP application
+# VM ID Guidelines for Applications:
+# 200-219: Web servers (Apache/Nginx)
+# 220-239: Application servers (PHP/Python/Node.js)
+# 240-259: API gateways and microservices
+# 300-319: Primary databases
+# 320-339: Database replicas
+
+# Create VM for CakePHP application (Web Server tier)
 qm create 201 \
-  --name "cakephp-app01" \
+  --name "web-cakephp-prod01" \
+  --description "CakePHP E-commerce Production Web Server #1" \
   --memory 8192 \
   --cores 4 \
   --sockets 1 \
@@ -176,9 +218,10 @@ systemctl reload apache2
 ### Database Configuration (Separate VM)
 
 ```bash
-# Create MySQL VM
-qm create 202 \
-  --name "mysql-db01" \
+# Create MySQL VM (Primary Database tier - ID range 300-319)
+qm create 301 \
+  --name "mysql-ecommerce-prod01" \
+  --description "MySQL Primary Database for E-commerce Platform" \
   --memory 16384 \
   --cores 8 \
   --sockets 1 \
@@ -186,7 +229,28 @@ qm create 202 \
   --net0 virtio,bridge=vmbr0,tag=210 \
   --scsi0 local-lvm:32,cache=none \
   --scsi1 local-lvm:200,cache=writeback \
-  --ostype l26
+  --ide2 local:iso/ubuntu-22.04.3-live-server-amd64.iso,media=cdrom \
+  --ostype l26 \
+  --boot order=scsi0 \
+  --agent enabled=1 \
+  --onboot 1
+
+# Optional: Create MySQL replica (Database replica tier - ID range 320-339)
+qm create 321 \
+  --name "mysql-ecommerce-replica01" \
+  --description "MySQL Read Replica for E-commerce Platform" \
+  --memory 12288 \
+  --cores 6 \
+  --sockets 1 \
+  --cpu host \
+  --net0 virtio,bridge=vmbr0,tag=210 \
+  --scsi0 local-lvm:32,cache=none \
+  --scsi1 local-lvm:200,cache=writeback \
+  --ide2 local:iso/ubuntu-22.04.3-live-server-amd64.iso,media=cdrom \
+  --ostype l26 \
+  --boot order=scsi0 \
+  --agent enabled=1 \
+  --onboot 1
 
 # MySQL Installation and Optimization
 apt install -y mysql-server mysql-client
@@ -231,6 +295,23 @@ mysql -e "CREATE DATABASE ecommerce_prod CHARACTER SET utf8mb4 COLLATE utf8mb4_u
 mysql -e "CREATE USER 'ecommerce'@'10.0.200.%' IDENTIFIED BY 'SecurePassword123!';"
 mysql -e "GRANT ALL PRIVILEGES ON ecommerce_prod.* TO 'ecommerce'@'10.0.200.%';"
 mysql -e "FLUSH PRIVILEGES;"
+
+# Additional cache/session VM (Cache tier - ID range 260-279)  
+# Create Redis VM for sessions and caching
+qm create 261 \
+  --name "redis-cache-prod01" \
+  --description "Redis Cache Server for Sessions and Application Cache" \
+  --memory 4096 \
+  --cores 2 \
+  --sockets 1 \
+  --cpu host \
+  --net0 virtio,bridge=vmbr0,tag=210 \
+  --scsi0 local-lvm:20,cache=writeback \
+  --ide2 local:iso/ubuntu-22.04.3-live-server-amd64.iso,media=cdrom \
+  --ostype l26 \
+  --boot order=scsi0 \
+  --agent enabled=1 \
+  --onboot 1
 ```
 
 ### CakePHP Application Configuration
@@ -241,7 +322,7 @@ mysql -e "FLUSH PRIVILEGES;"
 return [
     'Datasources' => [
         'default' => [
-            'host' => '10.0.210.202',
+            'host' => '10.0.210.51',  // MySQL Primary (VM 301)
             'username' => 'ecommerce',
             'password' => 'SecurePassword123!',
             'database' => 'ecommerce_prod',
@@ -253,12 +334,19 @@ return [
             'log' => false,
             'quoteIdentifiers' => false,
         ],
+        'read_replica' => [
+            'host' => '10.0.210.52',  // MySQL Replica (VM 321)
+            'username' => 'ecommerce',
+            'password' => 'SecurePassword123!',
+            'database' => 'ecommerce_prod',
+            'driver' => 'Cake\Database\Driver\Mysql',
+        ],
     ],
     
     'Cache' => [
         'default' => [
             'className' => 'Redis',
-            'servers' => ['10.0.210.203'],
+            'servers' => ['10.0.210.61'],  // Redis Cache (VM 261)
             'port' => 6379,
             'password' => false,
             'database' => 0,
@@ -280,14 +368,55 @@ return [
 ### VM Setup for Django
 
 ```bash
-# Create Django application VM
-qm create 301 \
-  --name "django-app01" \
+# VM ID Guidelines for Django SaaS Platform:
+# 220-239: Application servers (Django/Python)
+# 340-359: Analytics databases (PostgreSQL)
+# 260-279: Cache servers (Redis)
+
+# Create Django application VM (Application Server tier)
+qm create 221 \
+  --name "app-django-saas-prod01" \
+  --description "Django Multi-Tenant SaaS Application Server #1" \
   --memory 8192 \
   --cores 4 \
   --net0 virtio,bridge=vmbr0,tag=200 \
   --scsi0 local-lvm:40 \
-  --ostype l26
+  --ide2 local:iso/ubuntu-22.04.3-live-server-amd64.iso,media=cdrom \
+  --ostype l26 \
+  --boot order=scsi0 \
+  --agent enabled=1 \
+  --onboot 1
+
+# Create PostgreSQL database VM (Analytics Database tier - ID range 340-359)
+qm create 341 \
+  --name "postgres-saas-prod01" \
+  --description "PostgreSQL Database for Django SaaS Platform" \
+  --memory 16384 \
+  --cores 8 \
+  --sockets 1 \
+  --cpu host \
+  --net0 virtio,bridge=vmbr0,tag=210 \
+  --scsi0 local-lvm:40,cache=none \
+  --scsi1 local-lvm:300,cache=writeback \
+  --ide2 local:iso/ubuntu-22.04.3-live-server-amd64.iso,media=cdrom \
+  --ostype l26 \
+  --boot order=scsi0 \
+  --agent enabled=1 \
+  --onboot 1
+
+# Create Redis VM for Django caching/sessions (Cache tier - reusing range 260-279)
+qm create 262 \
+  --name "redis-django-prod01" \
+  --description "Redis Cache for Django SaaS Sessions and Celery" \
+  --memory 4096 \
+  --cores 2 \
+  --net0 virtio,bridge=vmbr0,tag=210 \
+  --scsi0 local-lvm:20 \
+  --ide2 local:iso/ubuntu-22.04.3-live-server-amd64.iso,media=cdrom \
+  --ostype l26 \
+  --boot order=scsi0 \
+  --agent enabled=1 \
+  --onboot 1
 ```
 
 ### Django Production Setup
@@ -346,7 +475,7 @@ DATABASES = {
         'NAME': 'saas_prod',
         'USER': 'saas_user',
         'PASSWORD': os.environ.get('DB_PASSWORD'),
-        'HOST': '10.0.210.204',
+        'HOST': '10.0.210.91',  # PostgreSQL VM 341
         'PORT': '5432',
         'CONN_MAX_AGE': 600,
         'OPTIONS': {
@@ -359,7 +488,7 @@ DATABASES = {
 CACHES = {
     'default': {
         'BACKEND': 'django.core.cache.backends.redis.RedisCache',
-        'LOCATION': 'redis://10.0.210.203:6379/1',
+        'LOCATION': 'redis://10.0.210.62:6379/1',  # Redis Django VM 262
         'OPTIONS': {
             'CLIENT_CLASS': 'django_redis.client.DefaultClient',
             'CONNECTION_POOL_KWARGS': {'max_connections': 50}
@@ -522,17 +651,55 @@ supervisorctl update
 
 ## Example 3: Docker Containerized Microservices
 
+> **⚠️ IMPORTANT: Docker Deployment Strategy**
+>
+> **Always run Docker inside VMs for production deployments.** While the Proxmox community sometimes runs Docker in LXC containers for homelab use, this approach is officially unsupported and creates significant security and stability risks:
+>
+> - **Security**: LXC containers share the host kernel, making container escapes immediately compromise the entire Proxmox host
+> - **Stability**: Proxmox updates frequently break Docker installations in LXC containers
+> - **Support**: Docker-in-LXC is explicitly unsupported by Proxmox
+> - **Compliance**: VM isolation is required for enterprise security standards (NIST 800-190, PCI-DSS)
+>
+> **The 5-10% resource overhead of VMs** is insignificant compared to the security, stability, and operational benefits provided by proper kernel isolation.
+
 ### Docker Host VM Setup
 
 ```bash
-# Create Docker host VM with more resources
-qm create 401 \
-  --name "docker-host01" \
+# VM ID Guidelines for Container Infrastructure:
+# 500-519: Docker hosts
+# 520-539: Kubernetes nodes
+# 540-559: Container registries
+
+# Create Docker host VM with more resources (Container Host tier - ID range 500-519)
+# scsi1 provides additional storage for Docker volumes
+qm create 501 \
+  --name "docker-host-prod01" \
+  --description "Docker Host for Production Microservices #1" \
   --memory 32768 \
   --cores 16 \
   --net0 virtio,bridge=vmbr0,tag=200 \
   --scsi0 local-lvm:100 \
-  --scsi1 local-lvm:500  # Additional storage for Docker volumes
+  --scsi1 local-lvm:500 \
+  --ide2 local:iso/ubuntu-22.04.3-live-server-amd64.iso,media=cdrom \
+  --ostype l26 \
+  --boot order=scsi0 \
+  --agent enabled=1 \
+  --onboot 1
+
+# Create additional Docker host for HA (optional)
+qm create 502 \
+  --name "docker-host-prod02" \
+  --description "Docker Host for Production Microservices #2" \
+  --memory 32768 \
+  --cores 16 \
+  --net0 virtio,bridge=vmbr0,tag=200 \
+  --scsi0 local-lvm:100 \
+  --scsi1 local-lvm:500 \
+  --ide2 local:iso/ubuntu-22.04.3-live-server-amd64.iso,media=cdrom \
+  --ostype l26 \
+  --boot order=scsi0 \
+  --agent enabled=1 \
+  --onboot 1
 ```
 
 ### Docker and Docker Compose Installation
@@ -913,7 +1080,21 @@ networks:
 ### HAProxy for Application Load Balancing
 
 ```bash
-# Install on separate VM or container
+# Create Load Balancer VM (Infrastructure tier - ID range 120-139)
+qm create 121 \
+  --name "lb-haproxy-prod01" \
+  --description "HAProxy Load Balancer for Production Applications" \
+  --memory 4096 \
+  --cores 4 \
+  --net0 virtio,bridge=vmbr0,tag=200 \
+  --scsi0 local-lvm:20 \
+  --ide2 local:iso/ubuntu-22.04.3-live-server-amd64.iso,media=cdrom \
+  --ostype l26 \
+  --boot order=scsi0 \
+  --agent enabled=1 \
+  --onboot 1
+
+# Install HAProxy on the load balancer VM
 apt install -y haproxy
 
 cat > /etc/haproxy/haproxy.cfg <<EOF
@@ -947,16 +1128,17 @@ backend web_servers
     balance roundrobin
     option httpchk GET /health/
     
-    # CakePHP servers
-    server cakephp-01 10.0.200.201:80 check maxconn 100
-    server cakephp-02 10.0.200.202:80 check maxconn 100
+    # CakePHP servers (VM 201, 202 if multiple)
+    server cakephp-01 10.0.200.51:80 check maxconn 100  # VM 201
+    server cakephp-02 10.0.200.52:80 check maxconn 100  # VM 202 (if created)
     
-    # Django servers
-    server django-01 10.0.200.301:443 check ssl verify none maxconn 100
-    server django-02 10.0.200.302:443 check ssl verify none maxconn 100
+    # Django servers (VM 221, 222 if multiple)  
+    server django-01 10.0.200.71:443 check ssl verify none maxconn 100  # VM 221
+    server django-02 10.0.200.72:443 check ssl verify none maxconn 100  # VM 222 (if created)
     
-    # Docker Swarm ingress
-    server swarm-01 10.0.200.401:80 check maxconn 200
+    # Docker Swarm ingress (VM 501, 502)
+    server swarm-01 10.0.200.251:80 check maxconn 200  # VM 501
+    server swarm-02 10.0.200.252:80 check maxconn 200  # VM 502
 
 stats enable
 stats uri /haproxy-stats
